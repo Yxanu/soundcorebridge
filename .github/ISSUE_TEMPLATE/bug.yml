@@ -16,7 +16,8 @@ body:
     attributes:
       label: macOS version
   - type: textarea
-    id: log
+    id: support_report
     attributes:
-      label: Anything in /tmp/soundcorebridge.log?
+      label: Sanitized device support report
+      description: Use the app's Copy support report button. Do not paste raw logs, Bluetooth names/addresses, serial numbers or HearID snapshots.
       render: text

@@ -4,3 +4,14 @@ build/
 .DS_Store
 *.xcuserdatad
 captures/snapshots.tsv
+
+# Local credentials and private hardware diagnostics must never be published.
+.env
+.env.*
+!.env.example
+*.log
+*.sqlite
+*.sqlite-*
+captures/
+support-report*.txt
+liberty5-*-test*.json

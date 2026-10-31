@@ -4,7 +4,7 @@ Thanks for taking a look.
 
 ## Reporting a problem
 
-[Open an issue](https://github.com/mervin008/soundcorebridge/issues/new/choose).
+[Open an issue in this fork](https://github.com/Yxanu/soundcorebridge/issues/new/choose).
 Anyone can — you don't need write access to the repo.
 
 If it's about a device, click the clipboard button beside Quit in the menu-bar
@@ -45,3 +45,9 @@ read-only by default.
 
 Small PRs are easier to review than large ones. If you're planning something
 big, open an issue first so we can talk about it.
+
+See [fork maintenance](docs/FORK_MAINTENANCE.md) for upstream synchronization,
+verification and publication boundaries. Never attach raw Bluetooth captures,
+serial numbers, private device names/addresses, databases or HearID snapshots.
+Use synthetic state fixtures for tests. Changes in this fork are not
+automatically submitted to the original project's maintainers.

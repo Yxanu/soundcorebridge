@@ -1,3 +1,12 @@
+> **Liberty 5 / macOS fork:** [Yxanu/soundcorebridge](https://github.com/Yxanu/soundcorebridge),
+> based on [mervin008/soundcorebridge](https://github.com/mervin008/soundcorebridge).
+> Adds device-confirmed ANC / Transparency / Normal, 22 EQ presets and custom EQ
+> for Liberty 5 (A3957, firmware 03.90). See the [hardware test results](TRIAL_RESULTS.txt)
+> and [fork maintenance guide](docs/FORK_MAINTENANCE.md). This is a development
+> fork, not an official Soundcore app or an Apple-notarized distribution.
+
+[![CI](https://github.com/Yxanu/soundcorebridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Yxanu/soundcorebridge/actions/workflows/ci.yml)
+
 <p align="center">
   <img src="assets/icon.png" width="96" alt="">
 </p>
@@ -39,9 +48,9 @@ SoundcoreBridge puts those controls in your menu bar instead.
 
 | Platform | Status |
 |---|---|
-| **macOS 13+** | Available now |
-| Windows | Coming soon |
-| Linux | Coming soon |
+| **macOS 13+** | Source build; Liberty 5 verified on Apple Silicon / macOS 26.6.2 |
+| Windows | Not implemented in this fork |
+| Linux | Not implemented in this fork |
 
 The protocol layer is platform-independent — only the Bluetooth transport is
 macOS-specific, so the other two are a port rather than a rewrite.
@@ -49,27 +58,21 @@ macOS-specific, so the other two are a port rather than a rewrite.
 ### macOS
 
 ```sh
-brew tap mervin008/tap
-brew trust mervin008/tap
-brew install --cask --no-quarantine mervin008/tap/soundcorebridge
+git clone https://github.com/Yxanu/soundcorebridge.git
+cd soundcorebridge
+./script/build_and_run.sh
 ```
 
-Homebrew asks you to trust third-party casks, hence the middle line. The app
-isn't notarised by Apple, which is what `--no-quarantine` takes care of.
-Needs macOS 13 or later.
-
-Prefer a download? Grab the zip from [releases](https://github.com/mervin008/soundcorebridge/releases/latest).
-
-Or build it:
-
-```sh
-git clone https://github.com/mervin008/soundcorebridge
-cd soundcorebridge && ./make-app.sh
-```
+Requires Xcode Command Line Tools and Swift 6+. The script builds, ad-hoc signs
+and launches a local menu-bar app, and produces `build/SoundcoreBridge-Liberty5.zip`.
+It stages the signed bundle outside File Provider-managed folders so sync
+metadata cannot invalidate its signature. No Developer ID or notarization is
+implied. The upstream Homebrew cask and upstream releases do **not** include
+this fork's Liberty 5 changes.
 
 ## Command line
 
-This local branch adds Liberty 5 (A3957) listening-mode and equalizer control. Build and launch
+This fork adds Liberty 5 (A3957) listening-mode and equalizer control. Build and launch
 it with `./script/build_and_run.sh`. The script also creates the portable app
 archive `build/SoundcoreBridge-Liberty5.zip`.
 
@@ -121,7 +124,7 @@ been confirmed on real hardware; until then it stays read-only rather than
 guessing, because wrong offsets written to headphones are how they end up in
 odd states.
 
-Got one that isn't listed? [Open an issue](https://github.com/mervin008/soundcorebridge/issues/new/choose)
+Got one that isn't listed? [Open an issue in this fork](https://github.com/Yxanu/soundcorebridge/issues/new/choose)
 and include a support report from the clipboard button beside Quit in the app.
 Reports include model, firmware, and profile details without Bluetooth names,
 addresses, or raw packets. This helps identify what needs to be verified;
