@@ -69,6 +69,14 @@ cd soundcorebridge && ./make-app.sh
 
 ## Command line
 
+This local branch adds Liberty 5 (A3957) listening-mode control. Build and launch
+it with `./script/build_and_run.sh`. The script also creates the portable app
+archive `build/SoundcoreBridge-Liberty5.zip`.
+
+For Liberty 5, `anc nc`, `anc transparency` and `anc normal` preserve the
+existing cancellation strength and other sound settings. Every mode change is
+read back from the device before success is reported. EQ is not enabled for it.
+
 ```sh
 soundcorectl status
 soundcorectl anc nc --level 5
@@ -82,6 +90,7 @@ soundcorectl support-report --out support-report.txt
 | Device | Status |
 |---|---|
 | Soundcore Space 2 | Full control |
+| Soundcore Liberty 5 (A3957) | Noise Cancelling / Transparency / Normal; left battery and firmware. EQ not enabled. |
 | Space One · Q45 · Life series | In progress |
 | Any other Soundcore model | Detected — battery and firmware only |
 

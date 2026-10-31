@@ -140,3 +140,29 @@ what `space2ctl anc nc --level N` sends.
 - Never close a failed attempt's channel; the close lands async and kills the
   next one.
 - `01:01` intermittently answers with a bare ack instead of the blob. Re-ask.
+
+## Liberty 5 (A3957): listening modes
+
+The local Liberty 5 implementation was verified against firmware 03.90 on
+macOS 26.6.2. The device advertises its vendor control service on RFCOMM
+channel 15. A `01:01` response contains a 154-byte state payload.
+
+- Identity: ASCII model at offsets 16...19, left firmware at 6...10.
+- Sound-mode block: state offsets 119...125, exactly seven bytes.
+- Mode byte: `00` Noise Cancelling, `01` Transparency, `02` Normal.
+- Set command: `06:81` with the seven-byte sound-mode block as its payload.
+
+Read the full current state immediately before encoding a mode change. Replace
+only the first sound-mode byte and preserve the other six bytes, which include
+strength and additional sound settings. A3957 does not receive the Space 2
+handshake or six-byte Space 2 sound-mode payload. Request state again after the
+write and require the mode and all preserved bytes to match.
+
+The packet shape was cross-checked against OpenSCQ30's A3957 implementation;
+all three modes were then confirmed by this physical device, with the original
+settings restored. EQ and ANC-strength controls remain disabled for A3957.
+
+The explicit `anc-cycle-test` CLI mode saves the original block before the
+first write, exercises all three modes, then restores and verifies it. It writes
+`build/liberty5-anc-test.json`, or a new path passed with `--out`. Quit the
+menu-bar app before running that test so it releases the control connection.

@@ -111,6 +111,7 @@ final class DeviceController: ObservableObject {
     /// read-only fallback keeps us from writing guessed offsets.
     @Published var profile: DeviceProfile = .unknown
     @Published var busy = false
+    @Published var controlError: String?
     @Published var requestedLevel = 5
     @Published private(set) var availableDevices: [PairedSoundcoreDevice] = []
     @Published private(set) var selectedDeviceAddress: String?
@@ -118,7 +119,11 @@ final class DeviceController: ObservableObject {
 
     private var worker: Thread?
     private let lock = NSLock()
-    private var outbox: [[UInt8]] = []
+    private enum DeviceRequest {
+        case packet([UInt8])
+        case soundMode(ANCMode, UInt8)
+    }
+    private var outbox: [DeviceRequest] = []
     private var running = true
     private var preferredAddress: String?
 
@@ -148,11 +153,11 @@ final class DeviceController: ObservableObject {
     }
 
     private func enqueue(_ packet: [UInt8]) {
-        lock.lock(); outbox.append(packet); lock.unlock()
+        lock.lock(); outbox.append(.packet(packet)); lock.unlock()
         ui { self.busy = true }
     }
 
-    private func drain() -> [[UInt8]] {
+    private func drain() -> [DeviceRequest] {
         lock.lock(); let p = outbox; outbox.removeAll(); lock.unlock()
         return p
     }
@@ -176,6 +181,7 @@ final class DeviceController: ObservableObject {
             self.busy = false
             self.profile = .unknown
             self.state = nil
+            self.controlError = nil
             self.status = "Switching device…"
         }
     }
@@ -183,24 +189,16 @@ final class DeviceController: ObservableObject {
     // MARK: commands
 
     func setANC(_ mode: ANCMode, level: Int) {
-        let packet: [UInt8]
-        do {
-            guard connected else { throw ProbeError("device is not connected") }
-            packet = try ancWrite(profile: profile, mode: mode, level: UInt8(clamping: level))
-        } catch {
-            applog("refused ANC write: \(error)")
-            return
-        }
+        guard connected, !busy, profile.supports(.soundMode), profile.allowsWrites else { return }
+        lock.lock()
+        outbox.append(.soundMode(mode, UInt8(clamping: level)))
+        lock.unlock()
         ui {
             self.requestedLevel = level
-            if var s = self.state {
-                s.ancMode = mode.rawValue
-                s.ancLevel = level
-                self.state = s
-            }
+            self.busy = true
+            self.controlError = nil
         }
-        applog("setANC \(mode.label) level \(level)")
-        enqueue(packet)
+        applog("request sound mode: \(mode.label)")
     }
 
     func setEQ(id: [UInt8], bands: [UInt8]) {
@@ -300,7 +298,7 @@ final class DeviceController: ObservableObject {
                         applog("device profile: \(resolved.displayName)")
                     }
                     self.ui { self.profile = resolved }
-                    self.ui { self.state = s; self.busy = false }
+                    self.ui { self.state = s }
                 }
             }
 
@@ -351,16 +349,37 @@ final class DeviceController: ObservableObject {
             while running && !link.wasClosed && preferredDeviceAddress() == currentAddress {
                 let packets = drain()
                 if !packets.isEmpty {
-                    for packet in packets {
-                        do {
-                            try link.send(packet)
-                            applog("sent \(packet.count)B \(hex(Array(packet.prefix(7))))")
-                        } catch {
-                            applog("SEND FAILED: \(error)")
+                    for request in packets {
+                        switch request {
+                        case let .soundMode(mode, level):
+                            do {
+                                let confirmed = try setSoundModeVerified(link, profile: identifiedProfile,
+                                                                         mode: mode, level: level)
+                                applog("sound mode confirmed by device: \(mode.label)")
+                                self.ui {
+                                    self.state = confirmed
+                                    self.status = "Connected"
+                                    self.controlError = nil
+                                }
+                            } catch {
+                                applog("SOUND MODE FAILED: \(error)")
+                                let message = String(describing: error)
+                                self.ui {
+                                    self.controlError = message
+                                    self.status = "Mode change not confirmed"
+                                }
+                            }
+                        case let .packet(packet):
+                            do {
+                                try link.send(packet)
+                                applog("sent \(packet.count)B \(hex(Array(packet.prefix(7))))")
+                            } catch {
+                                applog("SEND FAILED: \(error)")
+                            }
+                            pump(0.4)
+                            try? link.send(Command(0x01, 0x01))
+                            pump(0.3)
                         }
-                        pump(0.4)
-                        try? link.send(Command(0x01, 0x01))
-                        pump(0.3)
                     }
                     ui { self.busy = false }
                 }
@@ -707,6 +726,20 @@ struct MenuContent: View {
                 ancModeButton("Noise Cancelling", .noiseCancelling, icon: "ear.and.waveform")
                 ancModeButton("Transparency", .transparency, icon: "person.wave.2")
                 ancModeButton("Normal", .normal, icon: "headphones")
+            }
+            .disabled(!dev.connected || dev.busy)
+
+            if dev.busy {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for device confirmation…").font(.caption2)
+                }
+            }
+            if let error = dev.controlError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if dev.profile.supports(.ancLevel),

@@ -9,8 +9,9 @@ enum DeviceFeature: String, CaseIterable {
 
 /// A verified family of write commands. Read-only profiles deliberately have
 /// no control protocol, even if their state blob can be partially decoded.
-enum DeviceControlProtocol {
+enum DeviceControlProtocol: Equatable {
     case space2
+    case liberty5
 }
 
 /// Everything that varies between Soundcore models.
@@ -56,9 +57,8 @@ struct DeviceProfile {
 }
 
 extension DeviceProfile {
-    /// Read-only A3957 profile. Identity, left firmware and left battery were
-    /// confirmed from a 154-byte response on the real Liberty 5. Control packet
-    /// formats differ from Space 2; writes remain disabled.
+    /// A3957 uses a seven-byte sound-mode block at 119...125. Switching the
+    /// listening mode preserves the other six bytes. EQ is not enabled here.
     static let liberty5 = DeviceProfile(
         modelCode: "3957",
         nameMatches: ["liberty 5", "a3957"],
@@ -72,12 +72,12 @@ extension DeviceProfile {
         eqPresetOffset: nil,
         eqBandsStart: nil,
         eqBandCount: 0,
-        ancModeOffset: nil,
+        ancModeOffset: 119,
         ancLevelOffset: nil,
         hostCountOffset: nil,
-        soundModeValues: [:],
-        features: [.battery, .firmware],
-        controlProtocol: nil
+        soundModeValues: [0x00: .noiseCancelling, 0x01: .transparency, 0x02: .normal],
+        features: [.battery, .firmware, .soundMode],
+        controlProtocol: .liberty5
     )
 
     /// Soundcore Space 2 (D1402). Every offset here was confirmed against real
@@ -184,6 +184,8 @@ struct DeviceState: Equatable {
     var ancMode: UInt8?
     var ancLevel: Int?
     var hostCount: Int
+    /// Exact A3957 block, retained so unrelated sound settings survive writes.
+    var soundModePayload: [UInt8]? = nil
 }
 
 func parseState(_ p: [UInt8], profile: DeviceProfile) -> DeviceState? {
@@ -213,7 +215,8 @@ func parseState(_ p: [UInt8], profile: DeviceProfile) -> DeviceState? {
         eqBands: bands,
         ancMode: byte(profile.ancModeOffset),
         ancLevel: byte(profile.ancLevelOffset).map { Int($0 >> 4) },
-        hostCount: Int(byte(profile.hostCountOffset) ?? 1)
+        hostCount: Int(byte(profile.hostCountOffset) ?? 1),
+        soundModePayload: profile.controlProtocol == .liberty5 ? Array(p[119...125]) : nil
     )
 }
 

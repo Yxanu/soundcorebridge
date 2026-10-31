@@ -20,6 +20,7 @@ MODES
   watch                  Poll state and print byte-level diffs
   send <cmd> [payload]   Send one packet, e.g. `send 01:01`
   anc <mode> [--level n] Set ANC: nc | transparency | normal  (level 1-5 for nc)
+  anc-cycle-test        Test all three Liberty 5 modes, then restore original state
   eq <preset|dB list>    Set EQ: flat|acoustic|bassbooster, or "6,4,2,0,0,-2,-4,-6"
   snap --label <name>    One-shot state read, saved for diffing (releases channel)
   diffs                  Show byte diffs between consecutive snapshots
@@ -373,32 +374,11 @@ func modeANC() throws {
     defer { link.close() }
 
     let (profile, _) = try identify(link)
-    log("handshake …")
     try handshake(link, profile: profile)
-
-    let packet = try ancWrite(profile: profile, mode: mode, level: level)
-    let payload = ancPayload(mode, level: level)
-    log("-> 06:81  \(hex(payload))   (\(mode.label)\(mode == .noiseCancelling ? ", level \(level)" : ""))")
-    try link.send(packet)
-    pump(1.5)
-
-    // Read it back.
-    var confirmed: UInt8?
-    link.onPacket = { p in
-        if p.cmd == Command(0x06, 0x01), p.payload.count >= 1 { confirmed = p.payload[0] }
-        if p.cmd == Command(0x01, 0x01), p.payload.count > 71 { confirmed = p.payload[71] }
-    }
-    for _ in 0..<4 {
-        try? link.send(Command(0x06, 0x01))
-        pump(1.0) { confirmed != nil }
-        if confirmed != nil { break }
-    }
-    if let c = confirmed {
-        let ok = c == mode.rawValue
-        log(ok ? "confirmed: byte[71] = 0x\(String(format: "%02X", c)) — \(mode.label)"
-               : "NOT applied: device reports 0x\(String(format: "%02X", c))")
-    } else {
-        log("(device did not report state back; listen with `probe`)")
+    let confirmed = try setSoundModeVerified(link, profile: profile, mode: mode, level: level)
+    log("confirmed by device: \(mode.label)")
+    if let payload = confirmed.soundModePayload {
+        log("sound settings: \(hex(payload)) (other six bytes preserved)")
     }
 }
 
@@ -592,6 +572,7 @@ do {
     case "status":   try modeStatus()
     case "apptest":  try modeAppTest()
     case "anc":      try modeANC()
+    case "anc-cycle-test": try modeSoundModeTrial()
     case "eq":       try modeEQ()
     case "snap":     try modeSnap()
     case "diffs":    try modeDiffs()

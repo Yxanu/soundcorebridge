@@ -122,11 +122,12 @@ func modeSelfTest() {
     libertyPayload[3] = 0xFF
     libertyPayload.replaceSubrange(6...10, with: Array("03.90".utf8))
     libertyPayload.replaceSubrange(16...19, with: Array("3957".utf8))
+    libertyPayload.replaceSubrange(119...125, with: [0x00, 0x50, 0x01, 0x00, 0x01, 0x00, 0x00])
     let liberty = DeviceRegistry.resolve(state: libertyPayload, bluetoothName: "Renamed earbuds")
     let libertyState = parseState(libertyPayload, profile: liberty)
     let libertyOK = liberty.modelCode == "3957" && libertyState?.firmware == "03.90"
         && libertyState?.battery == 4 && batteryPercent(libertyState?.battery ?? 0) == 50
-        && !liberty.allowsWrites
+        && liberty.allowsWrites && liberty.supports(.soundMode) && !liberty.supports(.ancLevel)
         && (try? ancWrite(profile: liberty, mode: .normal, level: 5)) == nil
         && (try? eqWrite(profile: liberty, id: eqCustomID, bands: Array(repeating: 120, count: 8))) == nil
         && orderedControlChannels(preferred: [], advertised: [12, 15, 17],
@@ -134,7 +135,46 @@ func modeSelfTest() {
         && DeviceRegistry.resolve(state: Array(libertyPayload.prefix(20)),
                                   bluetoothName: "Liberty 5").modelCode.isEmpty
     if !libertyOK { failures += 1 }
-    log("  \(libertyOK ? "PASS" : "FAIL")  Liberty 5 identity, firmware and battery decode without enabling writes")
+    log("  \(libertyOK ? "PASS" : "FAIL")  Liberty 5 uses its own state layout and requires current state for writes")
+
+    let modeVectors: [(ANCMode, String)] = [
+        (.noiseCancelling, "08EE0000000681110000500100010000E0"),
+        (.transparency, "08EE0000000681110001500100010000E1"),
+        (.normal, "08EE0000000681110002500100010000E2"),
+    ]
+    for (mode, expected) in modeVectors {
+        // Passing another level must not alter A3957's saved ANC strength.
+        let packet = try? ancWrite(profile: liberty, mode: mode, level: 1, currentState: libertyState)
+        let ok = packet.map { hex($0, separator: "") } == expected
+        if !ok { failures += 1 }
+        log("  \(ok ? "PASS" : "FAIL")  Liberty 5 \(mode.label) packet preserves all other sound settings")
+    }
+
+    var confirmedPayload = libertyPayload
+    confirmedPayload[119] = ANCMode.transparency.rawValue
+    let confirmedState = parseState(confirmedPayload, profile: liberty)!
+    let expectedSoundSettings: [UInt8] = [0x01, 0x50, 0x01, 0x00, 0x01, 0x00, 0x00]
+    var unrelatedChange = confirmedState
+    unrelatedChange.soundModePayload?[4] = 0
+    let readbackOK = confirmsSoundMode(confirmedState, profile: liberty, mode: .transparency,
+                                      level: 5, expectedPayload: expectedSoundSettings)
+        && !confirmsSoundMode(libertyState!, profile: liberty, mode: .transparency,
+                              level: 5, expectedPayload: expectedSoundSettings)
+        && !confirmsSoundMode(unrelatedChange, profile: liberty, mode: .transparency,
+                              level: 5, expectedPayload: expectedSoundSettings)
+    if !readbackOK { failures += 1 }
+    log("  \(readbackOK ? "PASS" : "FAIL")  readback rejects stale mode and changes to unrelated sound settings")
+
+    var wrongIdentity = libertyState!
+    wrongIdentity.model = "1402"
+    var truncatedState = libertyState!
+    truncatedState.soundModePayload = [0, 0x50]
+    let stateGuardOK = (try? ancWrite(profile: liberty, mode: .normal, level: 5,
+                                     currentState: wrongIdentity)) == nil
+        && (try? ancWrite(profile: liberty, mode: .normal, level: 5,
+                          currentState: truncatedState)) == nil
+    if !stateGuardOK { failures += 1 }
+    log("  \(stateGuardOK ? "PASS" : "FAIL")  rejects wrong-model or incomplete Liberty 5 state before a write")
 
     log("\nsupport reports")
     let verifiedReport = SupportReport(profile: space2, state: decoded, connected: true, channel: 30).text
