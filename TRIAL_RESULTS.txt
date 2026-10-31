@@ -1,8 +1,8 @@
-SoundcoreBridge / Liberty 5 listening-mode implementation
+SoundcoreBridge / Liberty 5 listening-mode and EQ implementation
 Date: 2026-10-31
 Upstream: https://github.com/mervin008/soundcorebridge
 Upstream revision: 3a631b9
-Local branch: feature/liberty5-sound-modes
+Local branch: feature/liberty5-equalizer
 Host: Apple Silicon, macOS 26.6.2, Swift 6.3.3
 
 Device: Liberty 5 / A3957, firmware 03.90
@@ -15,7 +15,12 @@ Implemented
 - Preserve the six non-mode bytes from the device's current sound settings.
 - Confirm mode changes against a checksum-valid device state response.
 - Reject stale or mismatched readback and expose errors in the menu-bar panel.
-- Keep EQ and ANC-strength controls disabled for Liberty 5.
+- All 22 EQ presets and custom eight-band EQ in CLI and menu-bar app.
+- Use A3957's 114-byte two-channel EQ/HearID body, never Space 2's payload.
+- Retain HearID calibration, hidden bands, timestamp, type and favorite genre.
+- Select EQ with HearID disabled; explain that behavior in the app.
+- Require both earbuds; block unverified Dolby/genre-HearID interaction.
+- Keep ANC-strength controls disabled for Liberty 5.
 
 Real-device CLI test
 Original state:       00 50 01 00 01 00 00 (Noise Cancelling)
@@ -29,13 +34,42 @@ Menu-bar verification
 The live panel displays all three mode buttons. Its controller log confirms
 Transparency, Normal and Noise Cancelling via device readback. The last
 confirmed GUI state is Noise Cancelling, matching the original mode.
+The EQ card displays the actual preset and eight-band curve. Bass Booster was
+selected through the live app and confirmed visibly in the panel (+4 +3 +1 dB).
+A first-band slider decrement produced Custom FEFE and was confirmed by device
+readback in the controller log. The original EQ was restored afterward.
+
+Real-device EQ test
+- Initial smoke test: Rock, Bass Booster, Signature, custom [+1,-1,0,0,0,0,0,0] dB.
+- Complete test: all 22 factory presets and the same custom curve passed.
+- Every step checked full preset ID and available channel's ten band bytes.
+- HearID calibration and all seven listening-mode bytes remained unchanged.
+- The original EQ and complete HearID block were restored exactly, including
+  original hidden bands and unavailable-right-channel bytes.
+- The snapshot recovery command was also exercised after GUI EQ changes.
+- All three ANC modes passed again after the complete EQ test and were restored.
+- Local machine-readable reports (private; include HearID calibration):
+  build/liberty5-eq-test.json
+  build/liberty5-eq-all-presets-test.json
+  build/liberty5-anc-eq-regression-test.json
+
+Limits of this verification
+- Firmware 03.90 omits the right EQ curve (ten FF bytes). Both curves are sent,
+  but only available channel readback can be checked independently.
+- These are control/state tests, not an acoustic measurement or listening test.
+- Live tests started with HearID and Dolby/immersive audio disabled.
+- Enabled initial/custom HearID restoration has synthetic offline coverage only.
+- Genre-HearID and Dolby interaction remains blocked, not claimed as supported.
 
 Checks
 - Swift build and all built-in self-tests pass.
 - Exact A3957 packet vectors cover all three modes.
 - Tests verify preservation of unrelated settings, wrong-model rejection,
   incomplete-state rejection, and stale/mismatched readback rejection.
-- Unknown models remain read-only; Liberty 5 EQ remains blocked.
+- EQ tests cover the 114-byte layout, separate factory/custom hidden bands,
+  two-channel writes, HearID preservation/restoration, right-channel sentinels,
+  full two-byte IDs, invalid inputs, blocked states, and stale readback rejection.
+- Space 2 vectors still pass; unknown models remain read-only.
 - The local app launches successfully.
 - The portable archive is built from a clean, ad-hoc-signed temporary bundle.
 
@@ -50,6 +84,8 @@ even in a .nosync folder. The run script therefore signs and launches a clean
 temporary bundle and creates the ZIP from that same bundle. This is a local
 ad-hoc build, not a notarized release.
 
-No EQ, HearID, button configuration, or firmware-update command was sent.
+Only listening-mode commands, EQ/HearID-preserving commands and state reads
+were used for the functional tests. No calibration, button configuration,
+spatial-audio setting or firmware-update operation was performed.
 Raw identity packets, private device names and addresses are excluded from this
 report and the tracked tests. Nothing was pushed to GitHub.

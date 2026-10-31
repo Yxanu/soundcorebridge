@@ -176,6 +176,8 @@ func modeSelfTest() {
     if !stateGuardOK { failures += 1 }
     log("  \(stateGuardOK ? "PASS" : "FAIL")  rejects wrong-model or incomplete Liberty 5 state before a write")
 
+    failures += equalizerSelfTests()
+
     log("\nsupport reports")
     let verifiedReport = SupportReport(profile: space2, state: decoded, connected: true, channel: 30).text
     let verifiedReportOK = verifiedReport.contains("Model code: 1402")

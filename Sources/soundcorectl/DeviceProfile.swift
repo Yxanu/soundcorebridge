@@ -58,7 +58,8 @@ struct DeviceProfile {
 
 extension DeviceProfile {
     /// A3957 uses a seven-byte sound-mode block at 119...125. Switching the
-    /// listening mode preserves the other six bytes. EQ is not enabled here.
+    /// listening mode preserves the other six bytes. EQ uses a separate
+    /// two-channel encoder that preserves the device's HearID calibration.
     static let liberty5 = DeviceProfile(
         modelCode: "3957",
         nameMatches: ["liberty 5", "a3957"],
@@ -69,14 +70,14 @@ extension DeviceProfile {
         batteryMax: 9,
         firmwareRange: 6...10,
         modelRange: 16...19,
-        eqPresetOffset: nil,
-        eqBandsStart: nil,
-        eqBandCount: 0,
+        eqPresetOffset: 38,
+        eqBandsStart: 40,
+        eqBandCount: 8,
         ancModeOffset: 119,
         ancLevelOffset: nil,
         hostCountOffset: nil,
         soundModeValues: [0x00: .noiseCancelling, 0x01: .transparency, 0x02: .normal],
-        features: [.battery, .firmware, .soundMode],
+        features: [.battery, .firmware, .soundMode, .equaliser, .customEQ],
         controlProtocol: .liberty5
     )
 
@@ -186,6 +187,7 @@ struct DeviceState: Equatable {
     var hostCount: Int
     /// Exact A3957 block, retained so unrelated sound settings survive writes.
     var soundModePayload: [UInt8]? = nil
+    var liberty5EQ: Liberty5EqualizerState? = nil
 }
 
 func parseState(_ p: [UInt8], profile: DeviceProfile) -> DeviceState? {
@@ -206,17 +208,22 @@ func parseState(_ p: [UInt8], profile: DeviceProfile) -> DeviceState? {
         bands = Array(p[start..<(start + profile.eqBandCount)])
     }
 
+    let libertyEQ: Liberty5EqualizerState? = profile.controlProtocol == .liberty5
+        ? Liberty5EqualizerState(configuration: Array(p[38...59]), hearID: Array(p[61...108]),
+                                bothBudsConnected: p[1] == 1, immersiveAudio: p[136]) : nil
+
     return DeviceState(
         battery: Int(byte(profile.batteryOffset) ?? 0),
         batteryMax: profile.batteryMax,
         firmware: ascii(profile.firmwareRange),
         model: ascii(profile.modelRange),
         eqPreset: byte(profile.eqPresetOffset),
-        eqBands: bands,
+        eqBands: libertyEQ?.displayedBands ?? bands,
         ancMode: byte(profile.ancModeOffset),
         ancLevel: byte(profile.ancLevelOffset).map { Int($0 >> 4) },
         hostCount: Int(byte(profile.hostCountOffset) ?? 1),
-        soundModePayload: profile.controlProtocol == .liberty5 ? Array(p[119...125]) : nil
+        soundModePayload: profile.controlProtocol == .liberty5 ? Array(p[119...125]) : nil,
+        liberty5EQ: libertyEQ
     )
 }
 

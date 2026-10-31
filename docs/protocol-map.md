@@ -160,9 +160,73 @@ write and require the mode and all preserved bytes to match.
 
 The packet shape was cross-checked against OpenSCQ30's A3957 implementation;
 all three modes were then confirmed by this physical device, with the original
-settings restored. EQ and ANC-strength controls remain disabled for A3957.
+settings restored. ANC-strength controls remain disabled for A3957; EQ is
+implemented separately below.
 
 The explicit `anc-cycle-test` CLI mode saves the original block before the
 first write, exercises all three modes, then restores and verifies it. It writes
 `build/liberty5-anc-test.json`, or a new path passed with `--out`. Quit the
 menu-bar app before running that test so it releases the control connection.
+
+## Liberty 5 (A3957): equalizer / HearID preservation
+
+Verified on the same physical A3957, firmware 03.90, macOS 26.6.2.
+Protocol reference: OpenSCQ30 revision `d314ce47a0fa542c584ed323c7028e39a9d399e1`,
+`lib/src/devices/soundcore/a3957/packets/{inbound/state_update.rs,outbound.rs}`
+and `common/modules/equalizer.rs` (`common_settings_type_2`). The Swift encoder
+is model-specific; it does not reuse Space 2's 53-byte payload or DSP matrix.
+
+State offsets (zero-based, in the 154-byte `01:01` payload):
+
+| Offsets | Meaning |
+|---|---|
+| 1 | Both earbuds connected (TWS) |
+| 38...39 | Preset ID, UInt16 little-endian |
+| 40...49 / 50...59 | Left / right ten-band EQ curves |
+| 61 | HearID enabled |
+| 62...81 | Initial HearID calibration, ten bands per channel |
+| 82...85 | HearID timestamp, big-endian; preserved verbatim |
+| 86 | HearID type (0 initial, 1 custom, 2 genre) |
+| 87...106 | Custom HearID calibration, ten bands per channel |
+| 107...108 | HearID favorite genre, little-endian; preserved verbatim |
+| 136 | Dolby/immersive audio; do not change EQ while enabled |
+
+`03:87` has a **114-byte** A3957 body:
+
+| Offsets | Contents |
+|---|---|
+| 0...1 | Preset ID |
+| 2...3 | Saved favorite genre |
+| 4...23 | Two ten-band EQ curves |
+| 24...25 | Zero |
+| 26...71 | Saved state[61...106] (HearID enabled, initial curves, time, type, custom curves) |
+| 72...111 | Active 20 curve bytes, each followed by zero |
+| 112...113 | Zero |
+
+Preset IDs are ordinal 0...21, notably Bass Booster **0002**, not Space 2's
+7E7E. Custom is FEFE. Visible bands are 100 / 200 / 400 / 800 / 1600 / 3200 /
+6400 / 12800 Hz, encoded as `120 + 10*dB`. Factory curves use hidden-band bytes
+`[120, 0]`; custom curves use `[120, 120]`. Selecting EQ disables HearID and
+retains every other calibration byte. Active bytes come from the selected EQ
+when HearID is disabled, or the initial/custom HearID curves when restoring an
+enabled initial/custom HearID snapshot. Genre-adjusted HearID is not synthesized.
+
+Both earbuds must be connected. Reject unknown models, incomplete metadata,
+invalid IDs/curves, enabled spatial audio, and enabled genre-based HearID before
+writing. Read fresh state on the Bluetooth worker thread immediately before
+each write, then require checksum-valid device readback before reporting success.
+
+Firmware 03.90 reports the right curve as ten FF bytes even with both earbuds
+connected. Writes include both curves; verification checks every available
+channel and never treats FF as a gain value. The right channel's application
+and audible output have not been independently verified. Exact restoration
+also checks the original FF sentinels and original hidden bands (which can
+differ from a freshly selected factory preset).
+
+`eq-cycle-test --all-presets` verified all 22 presets plus custom EQ, preserved
+HearID calibration and listening mode, then restored the exact original EQ/HearID.
+Its recovery snapshot is saved before the first write. `eq-restore --from file`
+can restore after interruption, rejecting mismatched model/firmware or a changed
+HearID calibration. Keep these ignored local snapshots private. Unit fixtures
+contain synthetic calibration only. Enabled HearID restoration has offline
+coverage, not a live-hardware claim.

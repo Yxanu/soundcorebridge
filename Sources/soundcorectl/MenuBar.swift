@@ -122,6 +122,7 @@ final class DeviceController: ObservableObject {
     private enum DeviceRequest {
         case packet([UInt8])
         case soundMode(ANCMode, UInt8)
+        case equalizer([UInt8], [UInt8])
     }
     private var outbox: [DeviceRequest] = []
     private var running = true
@@ -202,23 +203,15 @@ final class DeviceController: ObservableObject {
     }
 
     func setEQ(id: [UInt8], bands: [UInt8]) {
-        let packet: [UInt8]
-        do {
-            guard connected else { throw ProbeError("device is not connected") }
-            packet = try eqWrite(profile: profile, id: id, bands: bands)
-        } catch {
-            applog("refused EQ write: \(error)")
-            return
-        }
+        guard connected, !busy, profile.supports(.equaliser), profile.allowsWrites else { return }
+        lock.lock()
+        outbox.append(.equalizer(id, bands))
+        lock.unlock()
         ui {
-            if var s = self.state {
-                s.eqPreset = id.first
-                s.eqBands = bands
-                self.state = s
-            }
+            self.busy = true
+            self.controlError = nil
         }
-        applog("setEQ id \(hex(id)) bands \(hex(bands))")
-        enqueue(packet)
+        applog("request EQ id \(hex(id)) bands \(hex(bands))")
     }
 
     func refresh() {
@@ -289,7 +282,7 @@ final class DeviceController: ObservableObject {
             var identifiedProfile: DeviceProfile?
             link.onPacket = { [weak self] packet in
                 guard let self else { return }
-                if packet.cmd == Command(0x01, 0x01), packet.checksumOK {
+                if packet.isResponse, packet.cmd == Command(0x01, 0x01), packet.checksumOK {
                     let resolved = DeviceRegistry.resolve(state: packet.payload,
                                                           bluetoothName: rawName)
                     guard let s = parseState(packet.payload, profile: resolved) else { return }
@@ -367,6 +360,23 @@ final class DeviceController: ObservableObject {
                                 self.ui {
                                     self.controlError = message
                                     self.status = "Mode change not confirmed"
+                                }
+                            }
+                        case let .equalizer(id, bands):
+                            do {
+                                let confirmed = try setEQVerified(link, profile: identifiedProfile, id: id, bands: bands)
+                                applog("EQ confirmed by device: \(hex(id)) bands \(hex(confirmed.eqBands))")
+                                self.ui {
+                                    self.state = confirmed
+                                    self.status = "Connected"
+                                    self.controlError = nil
+                                }
+                            } catch {
+                                applog("EQ FAILED: \(error)")
+                                let message = String(describing: error)
+                                self.ui {
+                                    self.controlError = message
+                                    self.status = "EQ change not confirmed"
                                 }
                             }
                         case let .packet(packet):
@@ -525,12 +535,24 @@ struct MenuContent: View {
         return mode.label
     }
     private var activePresetKey: String? {
+        if let liberty = dev.state?.liberty5EQ {
+            guard !liberty.hearIDEnabled else { return nil }
+            return eqPresetOrder.first(where: { presets[$0.key]?.id == liberty.presetID })?.key
+        }
         guard let id = dev.state?.eqPreset, id != eqCustomID.first else { return nil }
-        return eqPresetOrder.first(where: { eqPresets[$0.key]?.id.first == id })?.key
+        return eqPresetOrder.first(where: { presets[$0.key]?.id.first == id })?.key
+    }
+    private var presets: [String: (id: [UInt8], bands: [UInt8])] { eqPresets(for: dev.profile) }
+    private var eqControlsDisabled: Bool {
+        !dev.connected || dev.busy || dev.state?.liberty5EQ?.writeBlockReason != nil
     }
     private var activePresetTitle: String {
-        guard let id = dev.state?.eqPreset else { return "Equaliser" }
-        if id == eqCustomID.first { return "Custom EQ" }
+        if let liberty = dev.state?.liberty5EQ {
+            if liberty.hearIDEnabled { return "HearID active" }
+            if liberty.presetID == eqCustomID { return "Custom EQ" }
+        } else if dev.state?.eqPreset == eqCustomID.first {
+            return "Custom EQ"
+        }
         guard let key = activePresetKey else { return "Equaliser" }
         return eqPresetOrder.first(where: { $0.key == key })?.title ?? "Equaliser"
     }
@@ -859,7 +881,7 @@ struct MenuContent: View {
             }
 
             // Real-time Visual EQ Curve
-            if let bands = dev.state?.eqBands {
+            if let bands = dev.state?.eqBands, bands.count == 8 {
                 EQCurveView(bands: bands, tint: tint)
             }
 
@@ -868,8 +890,8 @@ struct MenuContent: View {
                 Group {
                     LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 6) {
                         ForEach(eqPresetOrder, id: \.key) { preset in
-                            let value = eqPresets[preset.key]!
-                            let active = dev.state?.eqPreset == value.id[0]
+                            let value = presets[preset.key]!
+                            let active = activePresetKey == preset.key
                             Button {
                                 dev.setEQ(id: value.id, bands: value.bands)
                             } label: {
@@ -891,6 +913,7 @@ struct MenuContent: View {
                             }
                             .buttonStyle(PanelButtonStyle())
                             .hoverHighlight(active: active)
+                            .disabled(eqControlsDisabled)
                         }
                     }
                     .padding(.vertical, 2)
@@ -899,9 +922,9 @@ struct MenuContent: View {
             } else {
                 HStack(spacing: 6) {
                     ForEach(quickPresetKeys, id: \.self) { key in
-                        if let value = eqPresets[key] {
+                        if let value = presets[key] {
                             let title = eqPresetOrder.first(where: { $0.key == key })?.title ?? key.capitalized
-                            let active = dev.state?.eqPreset == value.id[0]
+                            let active = activePresetKey == key
                             Button {
                                 dev.setEQ(id: value.id, bands: value.bands)
                             } label: {
@@ -916,6 +939,7 @@ struct MenuContent: View {
                             }
                             .buttonStyle(PanelButtonStyle())
                             .hoverHighlight(active: active)
+                            .disabled(eqControlsDisabled)
                         }
                     }
                 }
@@ -945,7 +969,7 @@ struct MenuContent: View {
 
                 Spacer()
 
-                if let bands = dev.state?.eqBands {
+                if let bands = dev.state?.eqBands, bands.count == 8 {
                     Text(bands.map { String(format: "%+.0f", eqDecibels($0)) }.joined(separator: " "))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.tertiary)
@@ -954,6 +978,19 @@ struct MenuContent: View {
 
             if showCustomEQ {
                 customEditorView
+                    .disabled(eqControlsDisabled)
+            }
+            if let reason = dev.state?.liberty5EQ?.writeBlockReason {
+                Text(reason).font(.caption2).foregroundStyle(.secondary)
+            } else if dev.state?.liberty5EQ?.hearIDEnabled == true {
+                Text("Choosing an EQ turns HearID off; your calibration is retained.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if dev.busy {
+                Text("Waiting for device confirmation…").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let error = dev.controlError {
+                Text(error).font(.caption2).foregroundStyle(.red)
             }
         }
         .padding(14)
@@ -985,6 +1022,7 @@ struct MenuContent: View {
                             isEditing = editing
                             if !editing { sendCustomEQ() }
                         }
+                        .accessibilityLabel("EQ \(bandLabels[index]) Hz")
                         .rotationEffect(.degrees(-90))
                         .frame(width: 110, height: 18)
                         .frame(width: 38, height: 110)

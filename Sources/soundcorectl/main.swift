@@ -22,6 +22,8 @@ MODES
   anc <mode> [--level n] Set ANC: nc | transparency | normal  (level 1-5 for nc)
   anc-cycle-test        Test all three Liberty 5 modes, then restore original state
   eq <preset|dB list>    Set EQ: flat|acoustic|bassbooster, or "6,4,2,0,0,-2,-4,-6"
+  eq-cycle-test         Test Liberty 5 presets/custom EQ and restore EQ/HearID
+  eq-restore --from file Restore EQ/HearID from a Liberty 5 test snapshot
   snap --label <name>    One-shot state read, saved for diffing (releases channel)
   diffs                  Show byte diffs between consecutive snapshots
   gatt                   Scan BLE / dump GATT services
@@ -388,16 +390,21 @@ func modeEQ() throws {
         throw ProbeError("usage: soundcorectl eq <flat|acoustic|bassbooster|rock|...> | eq \"6,4,2,0,0,-2,-4,-6\"")
     }
 
+    let link = try connect()
+    defer { link.close(); activeLink = nil }
+    link.onPacket = nil
+    let (profile, _) = try identify(link)
     let id: [UInt8]
     let bands: [UInt8]
     let normalized = arg.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "-", with: "")
-    if let preset = eqPresets[normalized] {
+    if let preset = eqPresets(for: profile)[normalized] {
         id = preset.id
         bands = preset.bands
     } else {
-        let dB = arg.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-        guard dB.count == 8 else {
-            throw ProbeError("need 8 comma-separated dB values (range -6 to +6), got \(dB.count)")
+        let parts = arg.split(separator: ",", omittingEmptySubsequences: false)
+        let dB = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 8, dB.count == 8 else {
+            throw ProbeError("need exactly 8 comma-separated dB values (range -6 to +6)")
         }
         guard dB.allSatisfy({ $0 >= -6 && $0 <= 6 }) else {
             throw ProbeError("dB values must be between -6 and +6")
@@ -406,33 +413,12 @@ func modeEQ() throws {
         bands = dB.map { eqByte(dB: $0) }
     }
 
-    let link = try connect()
-    defer { link.close() }
-    let (profile, _) = try identify(link)
     log("handshake …")
     try handshake(link, profile: profile)
-
-    let packet = try eqWrite(profile: profile, id: id, bands: bands)
     log("-> 03:87  preset \(hex(id, separator: "")) bands \(hex(bands))")
     log("   (\(bands.map { String(format: "%+.1f", eqDecibels($0)) }.joined(separator: " ")) dB)")
-    try link.send(packet)
-    pump(1.5)
-
-    var got: [UInt8]?
-    link.onPacket = { p in
-        if p.cmd == Command(0x01, 0x01), p.payload.count > 32 { got = Array(p.payload[25...32]) }
-    }
-    for _ in 0..<5 {
-        try? link.send(Command(0x01, 0x01))
-        pump(1.0) { got != nil }
-        if got != nil { break }
-    }
-    if let got {
-        log(got == bands ? "confirmed: device reports \(hex(got))"
-                         : "MISMATCH: device reports \(hex(got)), expected \(hex(bands))")
-    } else {
-        log("(no state read back)")
-    }
+    let confirmed = try setEQVerified(link, profile: profile, id: id, bands: bands)
+    log("confirmed by device: \(hex(confirmed.eqBands))")
 }
 
 
@@ -457,11 +443,16 @@ func modeStatus() throws {
         firmware   \(s.firmware)
         ANC mode   \(s.ancMode.map { String(format: "0x%02X (%@)", $0, ANCMode(rawValue: $0)?.label ?? "?") } ?? "n/a")
         ANC level  \(s.ancLevel.map { "\($0)/5" } ?? "n/a")
-        EQ preset  \(s.eqPreset.map { String(format: "0x%02X", $0) } ?? "n/a")
+        EQ preset  \(s.liberty5EQ.map { hex($0.presetID) } ?? s.eqPreset.map { String(format: "0x%02X", $0) } ?? "n/a")
         EQ bands   \(hex(s.eqBands))
                    \(s.eqBands.map { String(format: "%+.1f", eqDecibels($0)) }.joined(separator: " ")) dB
         hosts      \(s.hostCount)
         """)
+    if let eq = s.liberty5EQ {
+        log("HearID     \(eq.hearIDEnabled ? "enabled" : "disabled") (calibration retained)")
+        log("both buds  \(eq.bothBudsConnected ? "connected" : "not connected")")
+        log("right EQ   \(eq.configuration[12] == 0xFF ? "not reported by firmware" : "available")")
+    }
 }
 
 
@@ -574,6 +565,8 @@ do {
     case "anc":      try modeANC()
     case "anc-cycle-test": try modeSoundModeTrial()
     case "eq":       try modeEQ()
+    case "eq-cycle-test": try modeEqualizerTrial()
+    case "eq-restore": try modeEqualizerRestore()
     case "snap":     try modeSnap()
     case "diffs":    try modeDiffs()
     case "gatt":

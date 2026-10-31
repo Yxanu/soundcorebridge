@@ -69,13 +69,23 @@ cd soundcorebridge && ./make-app.sh
 
 ## Command line
 
-This local branch adds Liberty 5 (A3957) listening-mode control. Build and launch
+This local branch adds Liberty 5 (A3957) listening-mode and equalizer control. Build and launch
 it with `./script/build_and_run.sh`. The script also creates the portable app
 archive `build/SoundcoreBridge-Liberty5.zip`.
 
 For Liberty 5, `anc nc`, `anc transparency` and `anc normal` preserve the
 existing cancellation strength and other sound settings. Every mode change is
-read back from the device before success is reported. EQ is not enabled for it.
+read back from the device before success is reported.
+
+Liberty 5 also supports all 22 presets and custom eight-band EQ (−6…+6 dB,
+0.1 dB steps), in the CLI and menu-bar app. The A3957 encoder writes both
+ten-band channels, including the two hidden bands, and preserves HearID
+calibration. Selecting an EQ disables HearID but does not erase its calibration.
+Both earbuds must be connected. Dolby/immersive audio and genre-based HearID
+must first be turned off in the official app; their interaction is not verified.
+Firmware 03.90 omits right-channel EQ readback, so confirmation checks the full
+preset ID, every available channel, hidden bands and HearID metadata—not an
+independently measured audio response.
 
 ```sh
 soundcorectl status
@@ -85,12 +95,24 @@ soundcorectl eq "6,4,2,0,0,-2,-4,-6"
 soundcorectl support-report --out support-report.txt
 ```
 
+To repeat the opt-in Liberty 5 hardware test, quit the menu-bar app first:
+
+```sh
+swift run soundcorectl eq-cycle-test --all-presets --out build/my-eq-test.json
+# Recovery after an interrupted test, using that test's original settings:
+swift run soundcorectl eq-restore --from build/my-eq-test.json
+```
+
+The test saves the original EQ/HearID before the first write and restores it
+after success or failure. It refuses to overwrite an existing report. Reports
+contain personal HearID calibration; keep them private (`build/` is gitignored).
+
 ## Supported headphones
 
 | Device | Status |
 |---|---|
 | Soundcore Space 2 | Full control |
-| Soundcore Liberty 5 (A3957) | Noise Cancelling / Transparency / Normal; left battery and firmware. EQ not enabled. |
+| Soundcore Liberty 5 (A3957) | Noise Cancelling / Transparency / Normal; 22 EQ presets + custom eight-band EQ; left battery and firmware. Verified on firmware 03.90. |
 | Space One · Q45 · Life series | In progress |
 | Any other Soundcore model | Detected — battery and firmware only |
 
