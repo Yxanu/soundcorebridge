@@ -1,0 +1,47 @@
+SoundcoreBridge / Liberty 5 local trial
+Date: 2026-10-31
+Upstream: https://github.com/mervin008/soundcorebridge
+Source revision: 3a631b9
+Local branch: local/liberty5-trial
+Host: Apple Silicon, macOS 26.6.2, Swift 6.3.3
+
+Result
+The unmodified upstream RFCOMM transport connected to the real Liberty 5 on
+vendor channel 15 when selected explicitly using the CLI probe. The first
+channel-open attempt failed; the second succeeded. The device returned a
+154-byte state payload with a valid Soundcore frame checksum.
+
+Upstream's automatic discovery only tries channels 30 and 17 and filters paired
+devices by Bluetooth display name. A renamed Liberty 5 therefore needs extra
+discovery support. Its state offsets also differ from the Space 2 profile.
+
+Local additions
+- Identify vendor control services from the advertised Soundcore UUID family.
+- Discover renamed devices and prefer currently connected devices.
+- Read-only A3957 profile: model at 16..19, firmware at 6..10, left battery at 2.
+- Label A3957 correctly and label its single battery reading as the left bud.
+- Add regression coverage for the different offsets and disabled control writes.
+- Add script/build_and_run.sh and a Codex Run action.
+
+Verified
+- Original upstream build and all original self-tests passed.
+- Explicit read-only channel-15 probe received a valid response.
+- Local build and all self-tests, including A3957 checks, passed.
+- Automatic support-report identified model 3957 / firmware 03.90 / channel 15.
+- App bundle passed plist and ad-hoc code-signature checks.
+- Live menu-bar UI showed Soundcore Liberty 5, firmware 03.90 and 50% LEFT BUD.
+
+Limitations
+This local trial reads battery and firmware only. It does not implement
+Liberty-5 ANC, equalizer, button configuration or firmware updates. No control
+handshake or settings-changing command was sent during the trial.
+
+Run
+./script/build_and_run.sh
+
+App
+build/SoundcoreBridge.app
+
+The app remains open after the trial. Exit it before using another Bluetooth
+control client. Private device names, addresses and raw packets are not included
+in this report or the tracked regression fixture. Nothing was pushed to GitHub.

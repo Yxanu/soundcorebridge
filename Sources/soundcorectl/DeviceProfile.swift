@@ -56,6 +56,30 @@ struct DeviceProfile {
 }
 
 extension DeviceProfile {
+    /// Read-only A3957 profile. Identity, left firmware and left battery were
+    /// confirmed from a 154-byte response on the real Liberty 5. Control packet
+    /// formats differ from Space 2; writes remain disabled.
+    static let liberty5 = DeviceProfile(
+        modelCode: "3957",
+        nameMatches: ["liberty 5", "a3957"],
+        displayName: "Soundcore Liberty 5",
+        rfcommChannels: [15],
+        minStateLength: 154,
+        batteryOffset: 2,
+        batteryMax: 9,
+        firmwareRange: 6...10,
+        modelRange: 16...19,
+        eqPresetOffset: nil,
+        eqBandsStart: nil,
+        eqBandCount: 0,
+        ancModeOffset: nil,
+        ancLevelOffset: nil,
+        hostCountOffset: nil,
+        soundModeValues: [:],
+        features: [.battery, .firmware],
+        controlProtocol: nil
+    )
+
     /// Soundcore Space 2 (D1402). Every offset here was confirmed against real
     /// hardware — see docs/protocol-map.md.
     static let space2 = DeviceProfile(
@@ -109,7 +133,7 @@ extension DeviceProfile {
 
 /// The set of models this build knows how to drive.
 enum DeviceRegistry {
-    static let all: [DeviceProfile] = [.space2]
+    static let all: [DeviceProfile] = [.space2, .liberty5]
 
     /// Preferred: the model code the device reports about itself.
     static func profile(modelCode: String) -> DeviceProfile? {
@@ -136,11 +160,13 @@ enum DeviceRegistry {
         // A Bluetooth name is useful for discovery, but it is not sufficient
         // proof for enabling writes. Only the model code reported by the device
         // may resolve a write-capable profile.
-        let identityRange = DeviceProfile.unknown.modelRange
-        if state.count > identityRange.upperBound,
-           let code = String(bytes: state[identityRange], encoding: .ascii),
-           let exact = profile(modelCode: code) {
-            return exact
+        for profile in all where state.count >= profile.minStateLength {
+            let identityRange = profile.modelRange
+            if state.count > identityRange.upperBound,
+               let code = String(bytes: state[identityRange], encoding: .ascii),
+               code == profile.modelCode {
+                return profile
+            }
         }
         return .unknown
     }

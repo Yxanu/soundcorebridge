@@ -115,6 +115,27 @@ func modeSelfTest() {
     if !decodeOK { failures += 1 }
     log("  \(decodeOK ? "PASS" : "FAIL")  Space 2 state blob decodes through its profile")
 
+    // The Liberty 5 uses different identity and firmware offsets. This fixture
+    // retains the observed 154-byte layout but contains no device identifiers.
+    var libertyPayload = Array(repeating: UInt8(0), count: 154)
+    libertyPayload[2] = 4
+    libertyPayload[3] = 0xFF
+    libertyPayload.replaceSubrange(6...10, with: Array("03.90".utf8))
+    libertyPayload.replaceSubrange(16...19, with: Array("3957".utf8))
+    let liberty = DeviceRegistry.resolve(state: libertyPayload, bluetoothName: "Renamed earbuds")
+    let libertyState = parseState(libertyPayload, profile: liberty)
+    let libertyOK = liberty.modelCode == "3957" && libertyState?.firmware == "03.90"
+        && libertyState?.battery == 4 && batteryPercent(libertyState?.battery ?? 0) == 50
+        && !liberty.allowsWrites
+        && (try? ancWrite(profile: liberty, mode: .normal, level: 5)) == nil
+        && (try? eqWrite(profile: liberty, id: eqCustomID, bands: Array(repeating: 120, count: 8))) == nil
+        && orderedControlChannels(preferred: [], advertised: [12, 15, 17],
+                                  vendorChannels: [15]) == [15, 17, 30]
+        && DeviceRegistry.resolve(state: Array(libertyPayload.prefix(20)),
+                                  bluetoothName: "Liberty 5").modelCode.isEmpty
+    if !libertyOK { failures += 1 }
+    log("  \(libertyOK ? "PASS" : "FAIL")  Liberty 5 identity, firmware and battery decode without enabling writes")
+
     log("\nsupport reports")
     let verifiedReport = SupportReport(profile: space2, state: decoded, connected: true, channel: 30).text
     let verifiedReportOK = verifiedReport.contains("Model code: 1402")

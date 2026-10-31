@@ -619,7 +619,7 @@ struct MenuContent: View {
                         .lineLimit(1)
 
                     if let state = dev.state {
-                        Text("D\(state.model)  ·  Firmware \(state.firmware)")
+                        Text("\(dev.profile.modelCode == "3957" ? "A" : "D")\(state.model)  ·  Firmware \(state.firmware)")
                             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(.secondary)
                     } else {
@@ -638,7 +638,7 @@ struct MenuContent: View {
                         Text("\(battery)%")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                        Text("BATTERY")
+                        Text(dev.profile.modelCode == "3957" ? "LEFT BUD" : "BATTERY")
                             .font(.system(size: 8, weight: .bold))
                             .tracking(1)
                             .foregroundStyle(batteryColor(percent: battery))
@@ -652,8 +652,12 @@ struct MenuContent: View {
 
             if dev.connected, let state = dev.state {
                 HStack(spacing: 7) {
-                    infoChip(icon: "waveform", text: activeModeTitle, color: tint)
-                    infoChip(icon: "slider.horizontal.3", text: activePresetTitle, color: tint)
+                    if state.ancMode != nil {
+                        infoChip(icon: "waveform", text: activeModeTitle, color: tint)
+                    }
+                    if state.eqPreset != nil {
+                        infoChip(icon: "slider.horizontal.3", text: activePresetTitle, color: tint)
+                    }
                     if state.hostCount > 1 {
                         infoChip(icon: "laptopcomputer.and.iphone", text: "\(state.hostCount) hosts", color: .secondary)
                     }
