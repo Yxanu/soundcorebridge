@@ -4,8 +4,7 @@ set -euo pipefail
 MODE="${1:-run}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="SoundcoreBridge"
-APP_DIR="$ROOT_DIR/build/$APP_NAME.app"
-APP_BINARY="$APP_DIR/Contents/MacOS/$APP_NAME"
+OUTPUT_DIR="$ROOT_DIR/build"
 
 case "$MODE" in
     run|--debug|--logs|--telemetry|--verify) ;;
@@ -16,6 +15,12 @@ pkill -x "$APP_NAME" 2>/dev/null || true
 cd "$ROOT_DIR"
 swift build --product soundcorectl
 BUILD_BINARY="$(swift build --show-bin-path)/soundcorectl"
+# File Provider attaches FinderInfo to bundles under Documents, even inside a
+# .nosync directory on this host. Sign and launch a clean temporary bundle, and
+# archive that exact bundle for a portable copy in the workspace.
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/soundcorebridge-build.XXXXXX")"
+APP_DIR="$STAGING_DIR/$APP_NAME.app"
+APP_BINARY="$APP_DIR/Contents/MacOS/$APP_NAME"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
@@ -28,8 +33,13 @@ PLIST="$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 13.0" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :NSPrincipalClass string NSApplication" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$PLIST"
-xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+xattr -dr com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
 codesign --force --sign - "$APP_DIR"
+codesign --verify --strict "$APP_DIR"
+mkdir -p "$OUTPUT_DIR"
+ARCHIVE_PATH="$OUTPUT_DIR/SoundcoreBridge-Liberty5.zip"
+ditto -c -k --norsrc --keepParent "$APP_DIR" "$ARCHIVE_PATH"
+echo "Portable app: $ARCHIVE_PATH"
 
 case "$MODE" in
     --debug) exec lldb -- "$APP_BINARY" ;;
